@@ -26,12 +26,20 @@ commands:
       - *restore-workspace
       - *restore-cache
       - run:
-          name: Test (<< parameters.target >>)
-          command: TARGET=<< parameters.target >> cargo test
+          name: Test blst (<< parameters.target >>)
+          command: TARGET=<< parameters.target >> cargo test --no-default-features --features blst
           no_output_timeout: 15m
       - run:
-          name: Test (GPU) (<< parameters.target >>)
-          command: TARGET=<< parameters.target >> cargo test --release --features gpu
+          name: Test pairing (<< parameters.target >>)
+          command: TARGET=<< parameters.target >> cargo test --no-default-features --features pairing
+          no_output_timeout: 15m
+      - run:
+          name: Test blst (GPU) (<< parameters.target >>)
+          command: TARGET=<< parameters.target >> cargo test --release --no-default-features --features gpu blst
+          no_output_timeout: 30m
+      - run:
+          name: Test pairing (GPU) (<< parameters.target >>)
+          command: TARGET=<< parameters.target >> cargo test --release --no-default-features --features gpu pairing
           no_output_timeout: 30m
 
 jobs:
@@ -104,10 +112,16 @@ jobs:
       - run: echo 'export PATH="$HOME:~/.cargo/bin:$PATH"' >> $BASH_ENV
       - run: source $BASH_ENV
       - run:
-          name: Run cargo clippy
-          command: cargo clippy --all-features
+          name: Run cargo clippy (blst)
+          command: cargo clippy --no-default-features --features blst
+      - run:
+          name: Run cargo clippy (pairing)
+          command: cargo clippy --no-default-features --features pairing
+      - run:
+          name: Run cargo clippy (gpu)
+          command: cargo clippy --features gpu
 
-  build:
+  build_blst:
     executor: default
     steps:
       - *restore-workspace
@@ -116,8 +130,18 @@ jobs:
       - run: source $BASH_ENV
       - run:
           name: Run cargo release build
-          command: cargo build --release
+          command: cargo build --release --no-default-features --features blst
 
+  build_pairing:
+    executor: default
+    steps:
+      - *restore-workspace
+      - *restore-cache
+      - run: echo 'export PATH="$HOME:~/.cargo/bin:$PATH"' >> $BASH_ENV
+      - run: source $BASH_ENV
+      - run:
+          name: Run cargo release build
+          command: cargo build --release --no-default-features --features pairing
 
 workflows:
   version: 2.1
@@ -134,7 +158,10 @@ workflows:
       - test_x86_64-unknown-linux-gnu:
           requires:
             - cargo_fetch
-      - build:
+      - build_blst:
+          requires:
+            - cargo_fetch
+      - build_pairing:
           requires:
             - cargo_fetch
             
