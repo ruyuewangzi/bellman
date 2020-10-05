@@ -120,16 +120,17 @@ where
     let num_inputs = public_inputs[0].len();
     let num_proofs = proofs.len();
 
-    // TODO: best size for this
-    if num_proofs == 1 {
+    if num_proofs < 2 {
         return verify_proof(pvk, proofs[0], &public_inputs[0]);
     }
 
     let proof_num = proofs.len();
 
-    // choose random coefficients for combining the proofs
+    // Choose random coefficients for combining the proofs.
     let mut rand_z_repr: Vec<_> = Vec::with_capacity(proof_num);
     let mut rand_z: Vec<_> = Vec::with_capacity(proof_num);
+    let mut accum_y = E::Fr::zero();
+
     for _ in 0..proof_num {
         use rand::Rng;
 
@@ -137,27 +138,27 @@ where
         let mut el = E::Fr::zero().into_repr();
         let el_ref: &mut [u64] = el.as_mut();
         assert!(el_ref.len() > 1);
+
         el_ref[0] = (t & (-1i64 as u128) >> 64) as u64;
         el_ref[1] = (t >> 64) as u64;
 
+        let fr = E::Fr::from_repr(el).unwrap();
+
+        // calculate sum
+        accum_y.add_assign(&fr);
+        // store FrRepr
         rand_z_repr.push(el);
-        rand_z.push(E::Fr::from_repr(el).unwrap());
+        // store Fr
+        rand_z.push(fr);
     }
 
-    // This is very fast and needed by two threads so can live here
-    // accum_y = sum(zj)
-    let mut accum_y = E::Fr::zero();
-    for i in rand_z.iter() {
-        accum_y.add_assign(i);
-    }
-
-    // calculated by thread 3
+    // MillerLoop(\sum Accum_Gamma)
     let mut ml_g = E::Fqk::zero();
-    // calculated by thread 1
+    // MillerLoop(Accum_Delta)
     let mut ml_d = E::Fqk::zero();
-    // calculated by thread 2
+    // MillerLoop(Accum_AB)
     let mut acc_ab = E::Fqk::zero();
-    // calculated by thread 0
+    // Y^-Accum_Y
     let mut y = E::Fqk::zero();
 
     POOL.install(|| {
@@ -165,7 +166,7 @@ where
         let rand_z_repr = &rand_z_repr;
 
         rayon::scope(|s| {
-            // THREAD 3
+            // - Thread 1: Calculate MillerLoop(\sum Accum_Gamma)
             let ml_g = &mut ml_g;
             s.spawn(move |_| {
                 let scalar_getter = |idx: usize| -> <E::Fr as ff::PrimeField>::Repr {
@@ -174,13 +175,14 @@ where
                     }
                     let idx = idx - 1;
 
-                    // sum(zj * aj,i)
+                    // \sum(z_j * aj,i)
                     let mut cur_sum = rand_z[0];
                     cur_sum.mul_assign(&public_inputs[0][idx]);
 
                     for (pi_mont, mut rand_mont) in
                         public_inputs.iter().zip(rand_z.iter().copied()).skip(1)
                     {
+                        // z_j * a_j,i
                         let pi_mont = &pi_mont[idx];
                         rand_mont.mul_assign(pi_mont);
                         cur_sum.add_assign(&rand_mont);
@@ -189,7 +191,7 @@ where
                     cur_sum.into_repr()
                 };
 
-                // sum_i(accum_g * psi)
+                // \sum Accum_Gamma
                 let acc_g_psi = multiscalar::par_multiscalar::<_, E>(
                     &multiscalar::PublicInputs::Getter(scalar_getter),
                     &pvk.multiscalar,
@@ -197,14 +199,16 @@ where
                     256,
                 );
 
-                // ml(acc_g_psi, vk.gamma)
+                // MillerLoop(acc_g_psi, vk.gamma)
                 *ml_g = E::miller_loop(&[(&acc_g_psi.into_affine().prepare(), &pvk.gamma_g2)]);
             });
 
-            // THREAD 1
+            // - Thread 2: Calculate MillerLoop(Accum_Delta)
             let ml_d = &mut ml_d;
             s.spawn(move |_| {
                 let points: Vec<_> = proofs.iter().map(|p| p.c).collect();
+
+                // Accum_Delta
                 let acc_d: E::G1 = {
                     let pre = multiscalar::precompute_fixed_window::<E>(&points, 1);
                     multiscalar::multiscalar::<E>(
@@ -217,15 +221,17 @@ where
                 *ml_d = E::miller_loop(&[(&acc_d.into_affine().prepare(), &pvk.delta_g2)]);
             });
 
-            // THREAD 2
+            // - Thread 3: Calculate MillerLoop(Accum_AB)
             let acc_ab = &mut acc_ab;
             s.spawn(move |_| {
                 let accum_ab_mls: Vec<_> = proofs
                     .par_iter()
                     .zip(rand_z_repr.par_iter())
                     .map(|(proof, rand)| {
+                        // [z_j] pi_j,A
                         let mul_a = proof.a.mul(*rand);
 
+                        // -pi_j,B
                         let mut cur_neg_b = proof.b.into_projective();
                         cur_neg_b.negate();
 
@@ -236,22 +242,21 @@ where
                     })
                     .collect();
 
-                // accum_ab = mul_j(ml((zj*proof_aj), -proof_bj))
+                // Accum_AB = mul_j(ml((zj*proof_aj), -proof_bj))
                 *acc_ab = accum_ab_mls[0];
-
                 for accum in accum_ab_mls.iter().skip(1).take(num_proofs) {
                     acc_ab.mul_assign(accum);
                 }
             });
 
-            // THREAD 0
+            // Thread 4: Calculate Y^-Accum_Y
             let y = &mut y;
             s.spawn(move |_| {
-                // -accum_y
+                // -Accum_Y
                 let mut accum_y_neg = *accum_y;
                 accum_y_neg.negate();
 
-                // Y^-accum_y
+                // Y^-Accum_Y
                 *y = pvk.alpha_g1_beta_g2.pow(&accum_y_neg.into_repr());
             });
         });
