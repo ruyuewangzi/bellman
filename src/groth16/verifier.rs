@@ -7,6 +7,7 @@ use super::{multiscalar, PreparedVerifyingKey, Proof, VerifyingKey};
 use crate::multicore::VERIFIER_POOL as POOL;
 use crate::SynthesisError;
 
+/// Generate a prepared verifying key, required to verify a proofs.
 pub fn prepare_verifying_key<E: Engine>(vk: &VerifyingKey<E>) -> PreparedVerifyingKey<E> {
     let mut neg_gamma = vk.gamma_g2;
     neg_gamma.negate();
@@ -26,6 +27,7 @@ pub fn prepare_verifying_key<E: Engine>(vk: &VerifyingKey<E>) -> PreparedVerifyi
     }
 }
 
+/// Verify a single Proof.
 pub fn verify_proof<'a, E: Engine>(
     pvk: &'a PreparedVerifyingKey<E>,
     proof: &Proof<E>,
@@ -38,25 +40,36 @@ pub fn verify_proof<'a, E: Engine>(
     }
     let num_inputs = public_inputs.len();
 
+    // The original verification equation is:
+    // A * B = alpha * beta + inputs * gamma + C * delta
+    // ... however, we rearrange it so that it is:
+    // A * B - inputs * gamma - C * delta = alpha * beta
+    // or equivalently:
+    // A * B + inputs * (-gamma) + C * (-delta) = alpha * beta
+    // which allows us to do a single final exponentiation.
+
+    // Miller Loop for alpha * beta
     let mut ml_a_b = E::Fqk::zero();
+    // Miller Loop for C * (-delta)
     let mut ml_all = E::Fqk::zero();
+    // Miller Loop for inputs * (-gamma)
     let mut ml_acc = E::Fqk::zero();
 
     POOL.install(|| {
         // Start the two independent miller loops
         rayon::scope(|s| {
+            // - Thread 1: Calculate ML alpha * beta
             let ml_a_b = &mut ml_a_b;
             s.spawn(move |_| {
                 *ml_a_b = E::miller_loop(&[(&proof.a.prepare(), &proof.b.prepare())]);
             });
 
+            // - Thread 2: Calculate ML c * (-gamma)
             let ml_all = &mut ml_all;
             s.spawn(move |_| *ml_all = E::miller_loop(&[(&proof.c.prepare(), &pvk.neg_delta_g2)]));
 
-            // Multiscalar
-
+            // - Accumulate inputs (on the current thread)
             let subset = pvk.multiscalar.at_point(1);
-
             let public_inputs_repr: Vec<_> =
                 public_inputs.iter().map(PrimeField::into_repr).collect();
 
@@ -72,20 +85,18 @@ pub fn verify_proof<'a, E: Engine>(
             // acc miller loop
             let acc_aff = acc.into_affine();
             ml_acc = E::miller_loop(&[(&acc_aff.prepare(), &pvk.neg_gamma_g2)]);
-        }); // Gather the threaded miller loop
+        });
     });
+    // Wait for the threaded miller loops to finish
 
+    // Combine the results.
     ml_all.mul_assign(&ml_a_b);
     ml_all.mul_assign(&ml_acc);
 
-    // The original verification equation is:
-    // A * B = alpha * beta + inputs * gamma + C * delta
-    // ... however, we rearrange it so that it is:
-    // A * B - inputs * gamma - C * delta = alpha * beta
-    // or equivalently:
-    // A * B + inputs * (-gamma) + C * (-delta) = alpha * beta
-    // which allows us to do a single final exponentiation.
-    Ok(E::final_exponentiation(&ml_all).unwrap() == pvk.alpha_g1_beta_g2)
+    // Calculate the final exponentiation
+    let actual = E::final_exponentiation(&ml_all).unwrap();
+
+    Ok(actual == pvk.alpha_g1_beta_g2)
 }
 
 /// Randomized batch verification - see Appendix B.2 in Zcash spec
@@ -108,7 +119,8 @@ where
 
     let num_inputs = public_inputs[0].len();
     let num_proofs = proofs.len();
-    // TODO: best stize for this
+
+    // TODO: best size for this
     if num_proofs == 1 {
         return verify_proof(pvk, proofs[0], &public_inputs[0]);
     }
