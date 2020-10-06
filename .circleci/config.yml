@@ -39,7 +39,7 @@ commands:
       - *restore-cache
       - run:
           name: Test pairing (GPU) (<< parameters.target >>)
-          command: TARGET=<< parameters.target >> cargo test --release --no-default-features --features gpu pairing
+          command: TARGET=<< parameters.target >> cargo test --release --no-default-features --features gpu,pairing
           no_output_timeout: 30m
 
   test_target_blst:
@@ -63,7 +63,7 @@ commands:
       - *restore-cache
       - run:
           name: Test blst (GPU) (<< parameters.target >>)
-          command: TARGET=<< parameters.target >> cargo test --release --no-default-features --features gpu blst
+          command: TARGET=<< parameters.target >> cargo test --release --no-default-features --features gpu,blst
           no_output_timeout: 30m
 
 jobs:
