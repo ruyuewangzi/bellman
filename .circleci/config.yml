@@ -30,7 +30,6 @@ commands:
           command: TARGET=<< parameters.target >> cargo test --no-default-features --features pairing
           no_output_timeout: 15m
 
-commands:
   test_target_pairing_gpu:
     parameters:
       target:
@@ -43,7 +42,6 @@ commands:
           command: TARGET=<< parameters.target >> cargo test --release --no-default-features --features gpu pairing
           no_output_timeout: 30m
 
-commands:
   test_target_blst:
     parameters:
       target:
@@ -56,7 +54,6 @@ commands:
           command: TARGET=<< parameters.target >> cargo test --no-default-features --features blst
           no_output_timeout: 15m
 
-commands:
   test_target_blst_gpu:
     parameters:
       target:
