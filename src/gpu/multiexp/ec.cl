@@ -2,8 +2,7 @@
 
 #define POINT_ZERO ((POINT_projective){FIELD_ZERO, FIELD_ONE, FIELD_ZERO})
 
-// TODO: make dependent on the cargo feature
-#define BLSTRS // Affine points in `blstrs` library do not have `inf` field.
+__BLSTRS__ // Affine points in `blstrs` library do not have `inf` field.
 
 typedef struct {
   FIELD x;
