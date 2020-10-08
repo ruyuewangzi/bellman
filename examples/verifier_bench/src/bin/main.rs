@@ -6,20 +6,20 @@
 // --gpu                    Enables GPU
 // --samples                Number of runs
 // --dummy                  Skip param generation and generate dummy params/proofs
-
-use ff::{Field, PrimeField};
-use rand::{thread_rng, Rng};
 use std::sync::Arc;
+use std::time::Instant;
 
-use bellman::groth16::{
-    create_random_proof_batch, generate_random_parameters, prepare_batch_verifying_key,
+use bellperson::groth16::{
+    create_random_proof_batch, generate_random_parameters, prepare_verifying_key,
     verify_proofs_batch, Parameters, Proof, VerifyingKey,
 };
-use bellman::{Circuit, ConstraintSystem, SynthesisError};
+use bellperson::{
+    bls::{Bls12, Engine, Fr},
+    Circuit, ConstraintSystem, SynthesisError,
+};
+use fff::{Field, PrimeField, ScalarEngine};
 use groupy::CurveProjective;
-use paired::bls12_381::{Bls12, Fr};
-use paired::Engine;
-use std::time::Instant;
+use rand::{thread_rng, Rng};
 use structopt::StructOpt;
 
 macro_rules! timer {
@@ -101,9 +101,9 @@ fn dummy_proofs<E: Engine, R: Rng>(count: usize, rng: &mut R) -> Vec<Proof<E>> {
         .collect()
 }
 
-fn dummy_inputs<E: Engine, R: Rng>(count: usize, rng: &mut R) -> Vec<<E as ff::ScalarEngine>::Fr> {
+fn dummy_inputs<E: Engine, R: Rng>(count: usize, rng: &mut R) -> Vec<<E as ScalarEngine>::Fr> {
     (0..count)
-        .map(|_| <E as ff::ScalarEngine>::Fr::random(rng))
+        .map(|_| <E as ScalarEngine>::Fr::random(rng))
         .collect()
 }
 
@@ -155,7 +155,7 @@ struct Opts {
 
 fn main() {
     let rng = &mut thread_rng();
-    env_logger::init();
+    pretty_env_logger::init_timed();
 
     let opts = Opts::from_args();
     if opts.gpu {
@@ -176,7 +176,7 @@ fn main() {
         println!("Generating params... (You can skip this by passing `--dummy` flag)");
         generate_random_parameters(circuit.clone(), rng).unwrap()
     };
-    let pvk = prepare_batch_verifying_key(&params.vk);
+    let pvk = prepare_verifying_key(&params.vk);
 
     if opts.prove {
         println!("Proving...");
