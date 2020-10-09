@@ -63,7 +63,7 @@ pub fn verify_proof<'a, E: Engine>(
                 *ml_a_b = E::miller_loop(&[(&proof.a.prepare(), &proof.b.prepare())]);
             });
 
-            // - Thread 2: Calculate ML c * (-gamma)
+            // - Thread 2: Calculate ML C * (-delta)
             let ml_all = &mut ml_all;
             s.spawn(move |_| *ml_all = E::miller_loop(&[(&proof.c.prepare(), &pvk.neg_delta_g2)]));
 
@@ -80,7 +80,7 @@ pub fn verify_proof<'a, E: Engine>(
 
             acc.add_assign_mixed(&pvk.ic[0]);
 
-            // acc miller loop
+            // Calculate ML inputs * (-gamma)
             let acc_aff = acc.into_affine();
             ml_acc = E::miller_loop(&[(&acc_aff.prepare(), &pvk.neg_gamma_g2)]);
         });
